@@ -7,8 +7,11 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from pydantic import BaseModel
+from bs4 import BeautifulSoup
 
 from reader3 import Book, BookMetadata, ChapterContent, TOCEntry
+from llm_client import llm_client
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -33,6 +36,48 @@ def load_book_cached(folder_name: str) -> Optional[Book]:
     except Exception as e:
         print(f"Error loading book {folder_name}: {e}")
         return None
+
+class ReadAlongRequest(BaseModel):
+    book_id: str
+    chapter_index: int
+    level: str
+
+@app.post("/api/readalong")
+async def get_readalong(request: ReadAlongRequest):
+    book = load_book_cached(request.book_id)
+    if not book:
+        raise HTTPException(status_code=404, detail="Book not found")
+    
+    if request.chapter_index < 0 or request.chapter_index >= len(book.spine):
+        raise HTTPException(status_code=404, detail="Chapter not found")
+        
+    current_chapter = book.spine[request.chapter_index]
+    
+    # Extract text from HTML
+    soup = BeautifulSoup(current_chapter.content, "html.parser")
+    text_content = soup.get_text(separator="\n")
+    
+    # Limit text length
+    truncated_text = text_content[:4000]
+    if len(text_content) > 4000:
+        truncated_text += "\n...(text truncated)..."
+        
+    # Cache path
+    cache_path = os.path.join(BOOKS_DIR, request.book_id, "readalong_cache.json")
+    cache_key = f"{request.chapter_index}_{request.level}"
+    
+    # Context
+    context = f"Title: {book.metadata.title}"
+    
+    explanation = llm_client.get_cached_explanation(
+        cache_path=cache_path,
+        key=cache_key,
+        text=truncated_text,
+        level=request.level,
+        context=context
+    )
+    
+    return {"content": explanation}
 
 @app.get("/", response_class=HTMLResponse)
 async def library_view(request: Request):
