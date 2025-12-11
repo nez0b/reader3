@@ -32,14 +32,19 @@ class LLMClient:
         user_prompt = f"Context: {context}\n\nText to analyze:\n{text}"
 
         try:
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
+            params = {
+                "model": self.model,
+                "messages": [
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
-                ],
-                temperature=0.7,
-            )
+                ]
+            }
+            
+            # Check if using the o1 model which does not support temperature
+            if "gpt-5-nano" not in self.model:
+                 params["temperature"] = 0.7
+
+            response = self.client.chat.completions.create(**params)
             return response.choices[0].message.content
         except OpenAIError as e:
             print(f"OpenAI API Error: {e}")
